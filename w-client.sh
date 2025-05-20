@@ -1,64 +1,59 @@
 #!/bin/bash
 
-# WireGuard server config path
+# Variables for client and server
+CLIENT_NAME="android"
+CLIENT_PRIVATE_KEY="oIihVTq+6ApXPZgTn8UIFekXNymznn/bwrtkIm1V72w="
+CLIENT_IP="10.0.0.3/24"
+DNS_SERVER="8.8.8.8"
+SERVER_PUBLIC_KEY="n3uXywfarOm2Wq/9e4B4Mgb8LPSC+GCZt7HW6I7RJUI="
+SERVER_ENDPOINT="3.82.125.16:51820"
 WG_CONF="/etc/wireguard/wg0.conf"
 WG_INTERFACE="wg0"
-CLIENT_IP_BASE="10.0.0."
-START_IP=2
 
-# Replace with your server's public IP or domain and WireGuard port
-SERVER_ENDPOINT="your-server-ip-or-domain:51820"
-
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 client-name"
-  exit 1
+# Install WireGuard if not installed
+if ! command -v wg > /dev/null; then
+    echo "Installing WireGuard..."
+    sudo apt update
+    sudo apt install -y wireguard
+else
+    echo "WireGuard is already installed."
 fi
 
-CLIENT_NAME=$1
+# Make sure wg0.conf exists
+if [ ! -f "$WG_CONF" ]; then
+    echo "[Interface]" | sudo tee "$WG_CONF"
+    echo "Address = 10.0.0.1/24" | sudo tee -a "$WG_CONF"
+    echo "ListenPort = 51820" | sudo tee -a "$WG_CONF"
+    echo "PrivateKey = +IcGcTh4b4oN1MMOaiOxPH34tJfXmTsOgLlJ0ywkAmU=" | sudo tee -a "$WG_CONF"
+fi
 
-# Generate client private and public keys
-CLIENT_PRIVATE_KEY=$(wg genkey)
+# Derive client public key from private key
 CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
 
-# Find used IPs from AllowedIPs in server config
-USED_IPS=$(grep "AllowedIPs" "$WG_CONF" | awk '{print $3}' | cut -d'/' -f1)
-
-# Find the next available IP in the subnet
-NEXT_IP=""
-for i in $(seq $START_IP 254); do
-  IP="${CLIENT_IP_BASE}${i}"
-  if ! grep -q "$IP" <<< "$USED_IPS"; then
-    NEXT_IP=$IP
-    break
-  fi
-done
-
-if [ -z "$NEXT_IP" ]; then
-  echo "No available IP addresses left in the subnet."
-  exit 1
+# Check if peer already exists in config
+if grep -q "$CLIENT_PUBLIC_KEY" "$WG_CONF"; then
+    echo "Client peer already exists in server config."
+else
+    echo -e "\n[Peer]\n# $CLIENT_NAME\nPublicKey = $CLIENT_PUBLIC_KEY\nAllowedIPs = ${CLIENT_IP%/*}/32" | sudo tee -a "$WG_CONF"
+    echo "Added client peer to server config."
 fi
 
-# Add the new client peer to server config
-echo -e "\n[Peer]\n# $CLIENT_NAME\nPublicKey = $CLIENT_PUBLIC_KEY\nAllowedIPs = $NEXT_IP/32" >> "$WG_CONF"
+# Reload WireGuard config on server
+sudo wg syncconf "$WG_INTERFACE" <(sudo wg-quick strip "$WG_INTERFACE")
+echo "WireGuard configuration reloaded."
 
-# Reload WireGuard configuration
-wg syncconf "$WG_INTERFACE" <(wg-quick strip "$WG_INTERFACE")
-
-# Get server public key for client config
-SERVER_PUBLIC_KEY=$(wg show "$WG_INTERFACE" public-key)
-
-# Create client config file
+# Create client config file locally
 cat > "${CLIENT_NAME}.conf" <<EOF
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
-Address = $NEXT_IP/32
-DNS = 8.8.8.8
+Address = $CLIENT_IP
+DNS = $DNS_SERVER
 
 [Peer]
 PublicKey = $SERVER_PUBLIC_KEY
+AllowedIPs = 0.0.0.0/0
 Endpoint = $SERVER_ENDPOINT
-AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
 EOF
 
-echo "Client configuration created: ${CLIENT_NAME}.conf"
+echo "Client config file '${CLIENT_NAME}.conf' created."

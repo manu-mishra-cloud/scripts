@@ -32,7 +32,6 @@ sudo tee /etc/wireguard/${WG_INTERFACE}.conf >/dev/null <<EOF
 Address = ${SERVER_IP}/24
 ListenPort = ${WG_PORT}
 PrivateKey = $SERVER_PRIVATE_KEY
-SaveConfig = true
 EOF
 
 echo "Enabling IP forwarding..."
